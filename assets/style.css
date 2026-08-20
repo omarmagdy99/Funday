@@ -1,28 +1,23 @@
 /* ============ اليوم الترفيهي — تصميم موبايل أولاً ============ */
 
+/* ثيم فاتح ثابت — مش بيتغيّر مع إعدادات الموبايل */
 :root {
-  --bg: #0f1420;
-  --bg2: #161d2c;
-  --card: #1c2537;
-  --card2: #232e44;
-  --line: #2e3a52;
-  --text: #eef2f8;
-  --muted: #9aa8c0;
+  color-scheme: light;
+  --bg: #f3f6fb;
+  --bg2: #ffffff;
+  --card: #ffffff;
+  --card2: #f0f4fa;
+  --line: #dde5f0;
+  --text: #16202f;
+  --muted: #64748b;
   --brand: #3ba3ff;
   --brand2: #6ee7b7;
-  --warn: #ffb020;
-  --danger: #ff6b6b;
-  --ok: #34d399;
+  --warn: #b45309;
+  --danger: #dc2626;
+  --ok: #059669;
   --radius: 16px;
   --tap: 48px;
   --safe-b: env(safe-area-inset-bottom, 0px);
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f3f6fb; --bg2: #ffffff; --card: #ffffff; --card2: #f0f4fa;
-    --line: #dde5f0; --text: #16202f; --muted: #64748b;
-  }
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -102,8 +97,8 @@ a { color: var(--brand); }
 }
 .btn:active { transform: scale(.985); }
 .btn.primary { background: var(--brand); border-color: var(--brand); color: #04121f; }
-.btn.good { background: var(--ok); border-color: var(--ok); color: #04211a; }
-.btn.warn { background: var(--warn); border-color: var(--warn); color: #2a1a00; }
+.btn.good { background: var(--ok); border-color: var(--ok); color: #ffffff; }
+.btn.warn { background: var(--warn); border-color: var(--warn); color: #ffffff; }
 .btn.ghost { background: transparent; }
 .btn.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); background: transparent; }
 .btn.sm { min-height: 38px; padding: 0 12px; font-size: .85rem; }
@@ -261,3 +256,40 @@ details > summary { cursor: pointer; min-height: 40px; display: flex; align-item
   table { min-width: 0; font-size: 11px; }
   th { background: #eee; color: #000; }
 }
+
+/* اسم اللعبة كبير وواضح في كروت المباريات */
+.match .game-title {
+  font-size: 1.45rem;
+  font-weight: 800;
+  line-height: 1.25;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+.board-grid .match .game-title { font-size: 1.7rem; text-align: center; }
+.chip.warn-chip { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+
+/* شريط حالة الحفظ — بيظهر فوق ويختفي لوحده */
+.save-state {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  max-width: min(92vw, 460px);
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg2);
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 700;
+  box-shadow: 0 6px 24px rgba(15, 23, 42, 0.16);
+  text-align: center;
+  transition: opacity .25s ease, transform .25s ease;
+  pointer-events: none;
+}
+.save-state.busy { border-color: color-mix(in srgb, var(--brand) 55%, transparent); }
+.save-state.ok   { border-color: color-mix(in srgb, var(--ok) 55%, transparent); color: var(--ok); }
+.save-state.bad  { border-color: var(--danger); color: var(--danger); }
+.save-state.gone { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+@media print { .save-state { display: none; } }

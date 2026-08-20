@@ -12,6 +12,7 @@
   let locked = false;          // الفلاتر اللي جاية في الرابط مقفولة ومش بتتغيّر
   const scoreDraft = {};       // 'matchId|a' → القيمة اللي المشرف كاتبها ولسه مأكّدش
   let filters = { period: '', game: '', sup: '' };
+  let boardTime = null;        // null = الوقت الحالي، أو دقايق اليوم لو المشرف اختار وقت
   let tab = 'supervisor';
   let dirty = false;
   let working = false;
@@ -46,6 +47,58 @@
   /* يحوّل الأرقام الإنجليزية جوه أي نص لأرقام عربية عشان الشكل يبقى متناسق */
   function arDigits(s) {
     return String(s).replace(/[0-9]/g, function (d) { return '٠١٢٣٤٥٦٧٨٩'[+d]; });
+  }
+
+  /* ================= شريط «بيحفظ / اتحفظ» ================= */
+
+  let saveBarTimer = null;
+  let savingDepth = 0;
+
+  function saveBar(state, msg) {
+    let el = document.getElementById('saveState');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'saveState';
+      document.body.appendChild(el);
+    }
+    clearTimeout(saveBarTimer);
+    el.className = 'save-state ' + state;
+    el.textContent = msg;
+    el.setAttribute('role', 'status');
+    if (state !== 'busy') {
+      saveBarTimer = setTimeout(function () {
+        el.classList.add('gone');
+      }, state === 'bad' ? 4500 : 1800);
+    } else {
+      el.classList.remove('gone');
+    }
+  }
+
+  /* بنلفّ دوال الحفظ كلها مرة واحدة، فأي عملية حفظ في التطبيق بتظهر في الشريط */
+  function instrumentSaving() {
+    ['saveSetup', 'saveSchedule', 'updateMatch', 'shiftPending'].forEach(function (name) {
+      const orig = API[name];
+      if (typeof orig !== 'function' || orig.__wrapped) return;
+      const wrapped = async function () {
+        savingDepth++;
+        saveBar('busy', API.Backend.connected ? '⏳ بيحفظ على جوجل شيت…' : '⏳ بيحفظ على الجهاز…');
+        try {
+          const res = await orig.apply(API, arguments);
+          savingDepth--;
+          if (savingDepth <= 0) {
+            savingDepth = 0;
+            saveBar('ok', API.Backend.connected ? '✓ اتحفظ على جوجل شيت' : '✓ اتحفظ على الجهاز');
+          }
+          return res;
+        } catch (err) {
+          savingDepth = Math.max(0, savingDepth - 1);
+          saveBar('bad', '✕ الحفظ فشل — ' + (err && err.message ? err.message : 'جرّب تاني'));
+          throw err;
+        }
+      };
+      wrapped.__wrapped = true;
+      API[name] = wrapped;
+    });
   }
 
   let toastTimer = null;
@@ -382,8 +435,10 @@
     doc.periods.forEach(function (p, pi) {
       const info = a.periods[pi] || {};
       const okBadge = info.ok
-        ? '<span class="chip on">' + ar(info.slotCount) + ' جولة ✓</span>'
-        : '<span class="chip off">محتاجة ' + ar(info.requiredSlots || 0) + ' جولة</span>';
+        ? '<span class="chip on">' + ar(info.slotCount) + ' جولة • صفر راحة ✓</span>'
+        : (info.gamesCount && info.gamesCount < (info.minGamesNoRest || 0)
+          ? '<span class="chip off">محتاجة ' + ar(info.minGamesNoRest) + ' لعبة</span>'
+          : '<span class="chip off">محتاجة ' + ar(info.requiredSlots || 0) + ' جولة</span>');
       h += '<div class="card tight" style="background:var(--card2)">' +
         '<div class="card-head">' +
         '<input data-path="periods.' + pi + '.name" value="' + esc(p.name) + '" style="flex:1;min-width:120px" placeholder="اسم الفترة">' +
@@ -582,6 +637,12 @@
         a.notes.map(function (p) { return '<li>' + arDigits(esc(p)) + '</li>'; }).join('') + '</ul></div>';
     }
     if (a.teamCount >= 2 && a.totalGames > 0) {
+      h += a.problems.length
+        ? '<div class="alert warn"><b>قاعدة ثابتة:</b> مفيش أي فريق يرتاح في أي جولة — كل الفرق بتلعب في نفس الوقت. ' +
+          'عشان كده لازم كل فترة يكون فيها ' + ar(Math.ceil(a.teamCount / 2)) + ' لعبة على الأقل، ' +
+          'وعدد جولاتها = عدد ألعابها.</div>'
+        : '<div class="alert good"><b>صفر راحة ✓</b> كل فريق هيكون على لعبة في كل جولة، في كل الفترات. ' +
+          'عدد جولات كل فترة = عدد ألعابها بالظبط.</div>';
       h += a.noRepeatPossible
         ? '<div class="alert good">ممكن نعمل جدول من غير أي تكرار مواجهات: ' + ar(a.totalGames) +
         ' لعبة و' + ar(a.maxDistinctOpponents) + ' خصم متاح لكل فريق.</div>'
@@ -606,8 +667,28 @@
       '<div class="stat"><div class="v">' + ar(st.totalMatches) + '</div><div class="k">مباراة</div></div>' +
       '<div class="stat ' + (st.repeats ? 'warn' : 'ok') + '"><div class="v">' + ar(st.repeats) + '</div><div class="k">مواجهة مكررة</div></div>' +
       '<div class="stat ok"><div class="v">✓</div><div class="k">كل لعبة مرة</div></div>' +
-      '<div class="stat"><div class="v">' + ar(st.restSpread) + '</div><div class="k">فرق الراحة</div></div>' +
+      '<div class="stat ' + (st.noRest ? 'ok' : 'warn') + '"><div class="v">' +
+      (st.noRest ? '٠' : ar(st.restViolations)) + '</div><div class="k">فريق مستني</div></div>' +
+      '<div class="stat ' + (st.fullCoverage ? 'ok' : 'warn') + '"><div class="v">' +
+      ar(st.pairsCovered) + '/' + ar(st.pairsTotal) + '</div><div class="k">مواجهات اتغطّت</div></div>' +
       '</div>';
+
+    // كل فريق قابل كل الفرق التانية؟
+    if (st.fullCoverage) {
+      h += '<div class="alert good" style="margin-top:10px">كل فريق قابل <b>كل</b> الفرق التانية على الأقل مرة. ' +
+        'مفيش فريقين خلّصوا اليوم من غير ما يتلاعبوا. ✓</div>';
+    } else {
+      h += '<div class="alert bad" style="margin-top:10px"><b>' + ar(st.uncoveredPairs.length) +
+        ' مواجهة مش هتحصل خالص:</b><ul>' +
+        st.uncoveredPairs.slice(0, 12).map(function (u) {
+          return '<li>' + esc(u.a) + ' مش هيلعب مع ' + esc(u.b) + '</li>';
+        }).join('') +
+        (st.uncoveredPairs.length > 12 ? '<li>… و' + ar(st.uncoveredPairs.length - 12) + ' غيرهم</li>' : '') +
+        '</ul>' + (st.coveragePossible
+          ? 'ده ممكن يتصلّح — اضغط «جرّب توليد تاني».'
+          : 'عدد الألعاب أقل من عدد الخصوم، فمستحيل كل الفرق تتقابل. زوّد الألعاب.') +
+        '</div>';
+    }
     if (st.repeats === 0) h += '<div class="alert good" style="margin-top:10px">كل فريق هيقابل خصم مختلف في كل مباراة. 🎯</div>';
     else if (st.isOptimal) h += '<div class="alert good" style="margin-top:10px">' + ar(st.repeats) + ' تكرار — وده أقل عدد ممكن رياضياً بالأرقام دي. ✔</div>';
     else h += '<div class="alert warn" style="margin-top:10px">أحسن جدول لقيته فيه ' + ar(st.repeats) + ' تكرار. ' +
@@ -633,6 +714,14 @@
         'ضمان أكيد إن كل فريق يلعب كل لعبة مرة واحدة، والتكرار في المواجهات أقل ما يمكن.', 'balanced');
       h += optionCard(compare.strict, '② صفر تكرار مواجهات',
         'كل فريق يقابل خصم مختلف في كل مباراة — مع ضمان كل لعبة مرة واحدة كمان.', 'strict');
+      h += '<div class="card">' +
+        '<p class="small muted">مش عاجبك التوزيع؟ كل ضغطة بتجرّب توزيع جديد تماماً — ' +
+        'الشروط الإجبارية متضمونة في كل مرة، اللي بيتغيّر هو مين يقابل مين.' +
+        (compare.round ? ' (المحاولة رقم ' + ar(compare.round) + ')' : '') + '</p>' +
+        '<div class="spacer"></div>' +
+        '<button class="btn primary block big" data-action="recompare">' +
+        (working ? '⏳ بحسب…' : '🎲 جرّب توليد تاني') + '</button>' +
+        '</div>';
       h += '<button class="btn ghost block" data-action="cancel-compare">إلغاء</button>';
       return h;
     }
@@ -744,12 +833,12 @@
     return h;
   }
 
-  function statusBadge(r) {
+  function statusBadge(r, atMin) {
     if (r.status === 'done') {
       const sc = (r.scoreA !== '' && r.scoreB !== '') ? ' ' + esc(r.scoreA) + '–' + esc(r.scoreB) : '';
       return '<span class="badge done">تمّت' + sc + '</span>';
     }
-    const n = nowMin();
+    const n = (atMin === undefined || atMin === null) ? nowMin() : atMin;
     if (n >= r.startMin && n < r.endMin) return '<span class="badge now">جارية</span>';
     if (n >= r.endMin) return '<span class="badge" style="color:var(--warn)">متأخرة</span>';
     return '<span class="badge">لسه</span>';
@@ -798,12 +887,33 @@
     }
 
     const games = allGames();
-    const sups = allSupervisors();
     const myName = localStorage.getItem('funday.myName') || filters.sup || '';
 
-    // لو الفلتر على فترة، خلّي قائمة الألعاب بتاعتها بس
-    const gamesForPeriod = games.filter(function (g) { return !filters.period || g.periodId === filters.period; });
-    if (filters.game && !gamesForPeriod.some(function (g) { return g.id === filters.game; })) filters.game = '';
+    /* --- فلاتر مترابطة ---
+       كل قايمة بتتبني على أساس الفلاتر التانية الشغّالة بس (مش على نفسها)،
+       فلو اخترت مشرف تلاقي ألعابه هو بس، ولو اخترت لعبة تلاقي مشرفها وفترتها بس. */
+    function keep(g, ignore) {
+      if (ignore !== 'period' && filters.period && g.periodId !== filters.period) return false;
+      if (ignore !== 'game' && filters.game && g.id !== filters.game) return false;
+      if (ignore !== 'sup' && filters.sup && String(g.supervisor || '').trim() !== filters.sup) return false;
+      return true;
+    }
+
+    const gameOpts = games.filter(function (g) { return keep(g, 'game'); });
+
+    const supSet = {};
+    games.filter(function (g) { return keep(g, 'sup'); })
+      .forEach(function (g) { const v = String(g.supervisor || '').trim(); if (v) supSet[v] = 1; });
+    const sups = Object.keys(supSet).sort(function (a, b) { return a.localeCompare(b, 'ar'); });
+
+    const periodIds = {};
+    games.filter(function (g) { return keep(g, 'period'); }).forEach(function (g) { periodIds[g.periodId] = 1; });
+    const periodOpts = doc.periods.filter(function (p) { return periodIds[p.id]; });
+
+    // لو فلتر بقى مالوش لازمة بعد اختيار غيره، نشيله لوحدنا
+    if (filters.game && !games.some(function (g) { return g.id === filters.game && keep(g, 'game'); })) filters.game = '';
+    if (filters.sup && sups.indexOf(filters.sup) === -1 && !locked) filters.sup = '';
+    if (filters.period && !periodOpts.some(function (p) { return p.id === filters.period; })) filters.period = '';
 
     function opts(list, cur, allLabel) {
       return '<option value="">' + allLabel + '</option>' + list.map(function (o) {
@@ -835,7 +945,7 @@
       if (p) boxes.push('<span class="chip">📅 ' + esc(p.name) + '</span>');
     } else {
       boxes.push('<div class="field"><label>الفترة</label><select id="fPeriod">' +
-        opts(doc.periods.map(function (p) { return { v: p.id, t: p.name }; }), filters.period, '— كل الفترات —') +
+        opts(periodOpts.map(function (p) { return { v: p.id, t: p.name }; }), filters.period, '— كل الفترات —') +
         '</select></div>');
     }
     if (lockGame) {
@@ -843,7 +953,7 @@
       if (g) boxes.push('<span class="chip">🎮 ' + esc(g.name) + '</span>');
     } else {
       boxes.push('<div class="field"><label>اللعبة</label><select id="fGame">' +
-        opts(gamesForPeriod.map(function (g) { return { v: g.id, t: g.name }; }), filters.game, '— كل الألعاب —') +
+        opts(gameOpts.map(function (g) { return { v: g.id, t: g.name }; }), filters.game, '— كل الألعاب —') +
         '</select></div>');
     }
     const chips = boxes.filter(function (b) { return b.indexOf('<span') === 0; });
@@ -875,8 +985,9 @@
       const late = r.status !== 'done' && n >= r.endMin;
       h += '<div class="match ' + (isNow ? 'now ' : '') + (r.status === 'done' ? 'done' : '') + '">' +
         '<div class="card-head" style="margin-bottom:4px">' +
-        '<div><div class="time">' + tm(r.start) + ' – ' + tm(r.end) + '</div>' +
-        '<div class="meta">' + esc(r.gameName) + (r.place ? ' • ' + esc(r.place) : '') + ' • جولة ' + ar(r.round) + '</div></div>' +
+        '<div><div class="game-title">' + esc(r.gameName) + '</div>' +
+        '<div class="time">' + tm(r.start) + ' – ' + tm(r.end) + '</div>' +
+        '<div class="meta">' + (r.place ? esc(r.place) + ' • ' : '') + 'جولة ' + ar(r.round) + '</div></div>' +
         (isNow ? '<span class="badge now">دلوقتي</span>' : late ? '<span class="badge" style="color:var(--warn)">متأخرة</span>' : '') +
         '</div>' +
         '<div class="vs"><div class="t">' + esc(r.teamA) + '</div><div class="x">ضد</div><div class="t">' + esc(r.teamB) + '</div></div>';
@@ -1019,32 +1130,52 @@
 
   function viewBoard() {
     if (!doc.schedule.length) return '<div class="card center muted">لسه مفيش جدول.</div>';
-    const n = nowMin();
+
+    const live = boardTime === null;
+    const n = live ? nowMin() : boardTime;
     const current = doc.schedule.filter(function (r) { return n >= r.startMin && n < r.endMin; })
       .sort(function (a, b) { return a.gameName.localeCompare(b.gameName, 'ar'); });
     const upcoming = doc.schedule.filter(function (r) { return r.startMin > n; });
     const nextStart = upcoming.length ? Math.min.apply(null, upcoming.map(function (r) { return r.startMin; })) : null;
     const next = nextStart === null ? [] : doc.schedule.filter(function (r) { return r.startMin === nextStart; });
 
-    let h = '<div class="card board center"><div class="clock" id="liveClock">' + clockText() + '</div>' +
-      '<div class="muted small">' + esc(doc.config.title || 'اليوم الترفيهي') + '</div></div>';
+    let h = '<div class="card board center">' +
+      (live
+        ? '<div class="clock" id="liveClock">' + clockText() + '</div>'
+        : '<div class="clock">' + tm(S.fromMinutes(n)) + '</div>') +
+      '<div class="muted small">' + esc(doc.config.title || 'اليوم الترفيهي') + '</div>' +
+      (live ? '' : '<div class="chip warn-chip" style="margin-top:8px">⏸️ معاينة وقت مختار — مش الوقت الحالي</div>') +
+      '</div>';
 
-    h += '<h2 style="margin:14px 4px 8px">🔴 دلوقتي</h2>';
-    if (!current.length) h += '<div class="card center muted">مفيش مباريات شغالة دلوقتي</div>';
+    /* --- اختيار الوقت --- */
+    const slots = slotsOf();
+    h += '<div class="card tight">' +
+      '<div class="field"><label>الوقت المعروض</label><select id="fBoardTime">' +
+      '<option value=""' + (live ? ' selected' : '') + '>🔴 الوقت الحالي (' + tm(S.fromMinutes(nowMin())) + ')</option>' +
+      slots.map(function (sl) {
+        return '<option value="' + sl.startMin + '"' + (!live && boardTime === sl.startMin ? ' selected' : '') + '>' +
+          tm(sl.start) + ' – ' + tm(sl.end) + ' • ' + esc(sl.periodName) + ' • جولة ' + ar(sl.round) + '</option>';
+      }).join('') +
+      '</select></div>' +
+      (live ? '' : '<button class="btn sm block" data-action="board-now">↩︎ ارجع للوقت الحالي</button>') +
+      '</div>';
+
+    h += '<h2 style="margin:14px 4px 8px">' + (live ? '🔴 دلوقتي' : '▶️ في الوقت ده') + '</h2>';
+    if (!current.length) h += '<div class="card center muted">مفيش مباريات شغالة ' + (live ? 'دلوقتي' : 'في الوقت ده') + '</div>';
     else {
       h += '<div class="board-grid">' + current.map(function (r) {
-        return '<div class="match now"><div class="meta">' + esc(r.gameName) +
-          (r.place ? ' • ' + esc(r.place) : '') + '</div>' +
+        return '<div class="match now"><div class="game-title">' + esc(r.gameName) + '</div>' +
+          (r.place ? '<div class="meta">' + esc(r.place) + '</div>' : '') +
           '<div class="vs"><div class="t">' + esc(r.teamA) + '</div><div class="x">ضد</div><div class="t">' + esc(r.teamB) + '</div></div>' +
-          '<div class="center meta">' + tm(r.start) + ' – ' + tm(r.end) + ' • ' + statusBadge(r) + '</div></div>';
+          '<div class="center meta">' + tm(r.start) + ' – ' + tm(r.end) + ' • ' + statusBadge(r, n) + '</div></div>';
       }).join('') + '</div>';
     }
 
     if (next.length) {
       h += '<h2 style="margin:16px 4px 8px">⏭️ الجاي — ' + tm(next[0].start) + '</h2>' +
         '<div class="board-grid">' + next.map(function (r) {
-          return '<div class="match"><div class="meta">' + esc(r.gameName) +
-            (r.place ? ' • ' + esc(r.place) : '') + '</div>' +
+          return '<div class="match"><div class="game-title">' + esc(r.gameName) + '</div>' +
+            (r.place ? '<div class="meta">' + esc(r.place) + '</div>' : '') +
             '<div class="vs"><div class="t">' + esc(r.teamA) + '</div><div class="x">ضد</div><div class="t">' + esc(r.teamB) + '</div></div></div>';
         }).join('') + '</div>';
     }
@@ -1074,7 +1205,8 @@
       if (el.value && !localStorage.getItem('funday.myName')) localStorage.setItem('funday.myName', el.value);
       saveFilters(); render(); return;
     }
-    if (el.id === 'fPeriod') { filters.period = el.value; filters.game = ''; saveFilters(); render(); return; }
+    if (el.id === 'fBoardTime') { boardTime = el.value === '' ? null : Number(el.value); render(); return; }
+    if (el.id === 'fPeriod') { filters.period = el.value; saveFilters(); render(); return; }
     if (el.id === 'fGame') { filters.game = el.value; saveFilters(); render(); return; }
     if (el.dataset && el.dataset.recalc !== undefined) render();
   });
@@ -1088,6 +1220,7 @@
       /* --- التنقّل --- */
       if (act === 'goto') { tab = btn.dataset.tab; render(); return; }
       if (act === 'clear-filters') { filters = { period: '', game: '', sup: '' }; saveFilters(); render(); return; }
+      if (act === 'board-now') { boardTime = null; render(); return; }
       if (act === 'reload') {
         try { doc = await API.pull(); render(); toast('اتحدّث'); } catch (err) { toast(err.message, 'bad'); }
         return;
@@ -1189,6 +1322,7 @@
 
       /* --- التوليد --- */
       if (act === 'compare') { await runCompare(); return; }
+      if (act === 'recompare') { await runCompare(true); return; }
       if (act === 'cancel-compare') { compare = null; render(); return; }
       if (act === 'regen') {
         if (!confirm('هيتولّد جدول جديد وكل التأكيدات والنتائج هتتمسح. متأكد؟')) return;
@@ -1340,16 +1474,36 @@
 
   /* ================= التوليد ================= */
 
-  async function runCompare() {
+  /* بذرة عشوائية بتتغيّر كل مرة، عشان «توليد تاني» يدّي توزيع مختلف فعلاً */
+  let compareRound = 0;
+
+  async function runCompare(again) {
     working = true; render();
     const yieldUi = function () { return new Promise(function (r) { setTimeout(r, 40); }); };
     await yieldUi();   // خلّي الشاشة ترسم "بحسب…" الأول
+
+    if (!again) compareRound = 0;
+    compareRound++;
+    const seed = (Date.now() % 100000) + compareRound * 7919;
+
     try {
-      const balanced = S.generate(doc, { strictNoRepeat: false, seed: 3, timeBudgetMs: 2500 });
+      const prev = again && compare && compare.balanced && compare.balanced.ok ? compare.balanced : null;
+
+      const balanced = S.generate(doc, { strictNoRepeat: false, seed: seed, timeBudgetMs: 2500 });
       await yieldUi();
-      const strict = S.generate(doc, { strictNoRepeat: true, seed: 11, timeBudgetMs: 3000 });
-      compare = { balanced: balanced, strict: strict };
+      const strict = S.generate(doc, { strictNoRepeat: true, seed: seed + 991, timeBudgetMs: 3000 });
+
+      // لو التوليد الجديد أوحش من اللي قبله، نحتفظ بالأحسن
+      let bestBalanced = balanced;
+      if (prev && balanced.ok && prev.stats.penalty < balanced.stats.penalty) bestBalanced = prev;
+
+      compare = { balanced: bestBalanced, strict: strict, round: compareRound };
+
       if (!balanced.ok && !strict.ok) toast('مفيش حل بالأرقام دي — راجع التحذيرات', 'bad');
+      else if (again) {
+        if (bestBalanced === prev) toast('التوزيع الجديد مكانش أحسن — فضّلنا القديم', 'warn');
+        else toast('توزيع جديد ✓', 'good');
+      }
     } catch (err) {
       toast(err.message || 'فشل التوليد', 'bad');
     }
@@ -1382,5 +1536,6 @@
   }
 
   /* ================= إقلاع ================= */
+  instrumentSaving();
   boot();
 })();

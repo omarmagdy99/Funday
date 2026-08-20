@@ -60,6 +60,14 @@
   }
 
   /* ---------- تحليل الجدوى قبل التوليد ---------- */
+  /*
+     قاعدة إجبارية: مفيش أي فريق يرتاح في أي جولة.
+     يعني كل فريق لازم يكون على لعبة في كل جولة من جولات الفترة، وده بيتحقق لما:
+       ١) عدد الجولات المستخدمة في الفترة = عدد ألعاب الفترة بالظبط
+          (كل فريق بيلعب كل لعبة مرة واحدة ⇒ عدد مبارياته = عدد الألعاب).
+       ٢) عدد ألعاب الفترة ≥ نص عدد الفرق، عشان كل الفرق تلاقي مكان في نفس الجولة.
+     لو الوقت المتاح فيه جولات زيادة، بنستخدم الأول منها بس والباقي بيفضل فاضي.
+  */
 
   function analyze(model) {
     const n = (model.teams || []).length;
@@ -75,45 +83,71 @@
       const games = (p.games || []).length;
       totalGames += games;
 
-      const needForGames = games;                 // كل فريق يلعب كل ألعاب الفترة
-      const needForTeams = Math.ceil(nEff / 2);   // كل لعبة تستوعب كل الفرق (٢ في الجولة)
-      const required = Math.max(needForGames, needForTeams);
+      const availableSlots = slots.length;             // اللي الوقت بيسمح بيه
+      const minGamesNoRest = Math.ceil(nEff / 2);      // أقل عدد ألعاب عشان محدش يستنى
+      const requiredSlots = games;                     // الجولات المستخدمة = عدد الألعاب
+      const usedSlots = Math.min(availableSlots, games);
+      const spareSlots = Math.max(0, availableSlots - games);
+      const stepMin = (Number(p.gameMinutes) || 0) + (Number(p.breakMinutes) || 0);
 
       const info = {
         id: p.id,
         name: p.name,
-        slotCount: slots.length,
+        slotCount: usedSlots,                          // الجولات اللي الجدول هيستخدمها فعلاً
+        availableSlots: availableSlots,
+        spareSlots: spareSlots,
         gamesCount: games,
-        needForGames: needForGames,
-        needForTeams: needForTeams,
-        requiredSlots: required,
-        restPerTeam: Math.max(0, slots.length - games),
+        needForGames: games,
+        minGamesNoRest: minGamesNoRest,
+        requiredSlots: requiredSlots,
+        restPerTeam: 0,                                // القاعدة: صفر راحة دايماً
         idleStationsPerSlot: Math.max(0, games - Math.floor(nEff / 2)),
-        ok: slots.length >= required && games > 0 && slots.length > 0,
-        slots: slots
+        ok: games > 0 && availableSlots >= games && games >= minGamesNoRest,
+        slots: slots.slice(0, usedSlots)
       };
       periods.push(info);
 
       if (games === 0) {
         problems.push('الفترة «' + p.name + '» مفيهاش ألعاب.');
-      } else if (slots.length === 0) {
+      } else if (availableSlots === 0) {
         problems.push('الفترة «' + p.name + '» مدتها أقل من مدة اللعبة الواحدة.');
-      } else if (slots.length < required) {
-        const missing = required - slots.length;
-        const extraMin = missing * ((Number(p.gameMinutes) || 0) + (Number(p.breakMinutes) || 0));
-        problems.push(
-          'الفترة «' + p.name + '» محتاجة ' + required + ' جولة على الأقل ومتاح ' + slots.length +
-          '. ' + (needForTeams > needForGames
-            ? 'السبب: ' + n + ' فريق محتاجين ' + needForTeams + ' جولة عشان كل لعبة تستوعبهم كلهم (فريقين في الجولة).'
-            : 'السبب: ' + games + ' ألعاب محتاجة ' + games + ' جولة عشان كل فريق يلعبهم كلهم.') +
-          ' الحل: زوّد الفترة ' + extraMin + ' دقيقة، أو قلّل مدة اللعبة، أو قلّل عدد الألعاب.'
-        );
+      } else {
+        if (games < minGamesNoRest) {
+          const missing = minGamesNoRest - games;
+          // لو زوّدنا الألعاب للحد المطلوب، الوقت كمان هيحتاج جولات أكتر — نقول الاتنين مرة واحدة
+          let timeFix = '';
+          if (availableSlots < minGamesNoRest) {
+            const extraSlots = minGamesNoRest - availableSlots;
+            const fitMin = Math.floor((toMinutes(p.end) - toMinutes(p.start)) / minGamesNoRest) - (Number(p.breakMinutes) || 0);
+            timeFix = ' وانتبه: الوقت الحالي يكفي ' + availableSlots + ' جولة بس، فمحتاج كمان ' +
+              (extraSlots * stepMin) + ' دقيقة في الفترة' +
+              (fitMin > 0 ? '، أو تقلّل مدة اللعبة لـ ' + fitMin + ' دقيقة' : '') + '.';
+          }
+          problems.push(
+            'الفترة «' + p.name + '» فيها ' + games + ' لعبة بس و' + n + ' فريق. ' +
+            'كل لعبة بتشيل فريقين في الجولة، يعني ' + games + ' لعبة بتشغّل ' + (games * 2) + ' فريق فقط ' +
+            'و' + (nEff - games * 2) + ' فريق هيقعد يستنى — وده ممنوع. ' +
+            'الحل: زوّد ' + missing + ' لعبة في الفترة دي (تبقى ' + minGamesNoRest + ' لعبة على الأقل)، أو قلّل عدد الفرق.' +
+            timeFix
+          );
+        }
+        if (availableSlots < games) {
+          const missing = games - availableSlots;
+          problems.push(
+            'الفترة «' + p.name + '» محتاجة ' + games + ' جولة (واحدة لكل لعبة) ومتاح ' + availableSlots + '. ' +
+            'الحل: زوّد الفترة ' + (missing * stepMin) + ' دقيقة، أو قلّل مدة اللعبة، أو قلّل عدد الألعاب.'
+          );
+        }
       }
-      if (info.ok && info.restPerTeam > 0) {
-        notes.push('في «' + p.name + '»: كل فريق هيرتاح ' + info.restPerTeam + ' جولة.');
+
+      if (info.ok && spareSlots > 0) {
+        notes.push('في «' + p.name + '»: الوقت يسمح بـ ' + availableSlots + ' جولة والمحتاج ' + games +
+          ' — الجدول هياخد ' + games + ' جولة وهيخلّص قبل نهاية الفترة بـ ' + (spareSlots * stepMin) +
+          ' دقيقة (عشان محدش يقعد يستنى في النص).');
       }
       if (info.ok && info.idleStationsPerSlot > 0) {
-        notes.push('في «' + p.name + '»: ' + info.idleStationsPerSlot + ' لعبة هتفضل فاضية في كل جولة (الفرق أقل من عدد الألعاب × ٢).');
+        notes.push('في «' + p.name + '»: ' + info.idleStationsPerSlot + ' لعبة هتفضل فاضية في كل جولة ' +
+          '(الفرق أقل من عدد الألعاب × ٢) — دي محطات فاضية مش فرق مستنية.');
       }
     });
 
@@ -121,7 +155,7 @@
     const minRepeats = Math.max(0, totalGames - maxDistinct);
 
     if (odd && n > 0) {
-      notes.push('عدد الفرق فردي (' + n + ')، فهيكون فيه فريق «بدون منافس» في كل لعبة — يفضّل عدد زوجي.');
+      notes.push('عدد الفرق فردي (' + n + ')، فهيكون فيه فريق «بدون منافس» في كل جولة — هو واقف على لعبة مش مرتاح، بس يفضّل عدد زوجي.');
     }
 
     return {
@@ -133,6 +167,10 @@
       maxDistinctOpponents: maxDistinct,
       minRepeatsPerTeam: minRepeats,
       noRepeatPossible: n >= 2 && totalGames <= maxDistinct,
+      // كل فريق يقدر يقابل كل الفرق التانية؟ لازم عدد مبارياته ≥ عدد الخصوم
+      coveragePossible: n >= 2 && totalGames >= maxDistinct,
+      coverageShortfall: Math.max(0, maxDistinct - totalGames),
+      noRestGuaranteed: true,
       periods: periods,
       problems: problems,
       notes: notes,
@@ -144,7 +182,7 @@
   /*
      teams  : مصفوفة أرقام (فهارس) الفرق — بيشمل الفريق الوهمي لو العدد فردي
      games  : عدد الألعاب في الفترة
-     slotCnt: عدد الجولات
+     slotCnt: عدد الجولات (= عدد الألعاب، عشان كل فريق يلعب في كل جولة من غير راحة)
      pairCnt: مصفوفة عدّاد المواجهات السابقة [i][j]
      maxPair: أقصى عدد مرات مسموح لنفس المواجهة (1 = ممنوع التكرار نهائياً)
   */
@@ -172,6 +210,8 @@
       if (nodes++ > nodeLimit) throw new Error('BUDGET');
 
       if (pending.length === 0) {
+        // قاعدة إجبارية: محدش يقعد يستنى — كل فريق لازم يكون على لعبة في الجولة دي
+        for (let i = 0; i < nTeams; i++) if (!busy[i]) return false;
         assignment[slot] = out.slice();
         const remaining = slotCnt - slot - 1;
         if (!feasible(remaining)) return false;
@@ -340,6 +380,118 @@
     return perPeriod;
   }
 
+  /* ---------- تحسين موضعي: تقليل تكرار المواجهات ----------
+     الفكرة: نلاقي فريقين (أ) و(ب) وجولتين (س) و(ص) بحيث في (س) الفريق أ على لعبة ١
+     والفريق ب على لعبة ٢، وفي (ص) العكس بالظبط (أ على ٢ وب على ١).
+     ساعتها نقدر نبدّل مكانهم في الجولتين مع بعض من غير ما نكسر أي شرط:
+       • كل فريق لسه بيلعب كل لعبة مرة واحدة (اتبادلوا لعبتين بينهم في الاتجاهين)
+       • كل فريق لسه شغّال في كل جولة (البديل في نفس الجولة)
+       • عدد الفرق على كل لعبة في كل جولة ما اتغيّرش
+     اللي بيتغيّر بس هو مين بيقابل مين — فنقبل التبديل لو قلّل التكرار. */
+
+  function improvePairs(perPeriod, pairCnt, nEff, BYE, rnd, maxRounds) {
+    // وزن: تكرار بين فريقين حقيقيين أهم من تكرار «بدون منافس»
+    function w(x, y) { return (x === BYE || y === BYE) ? 0.4 : 1; }
+
+    function delta(removes, adds) {
+      let d = 0;
+      for (let i = 0; i < removes.length; i++) {
+        const x = removes[i][0], y = removes[i][1];
+        if (pairCnt[x][y] > 1) d -= w(x, y);
+        pairCnt[x][y]--; pairCnt[y][x]--;
+      }
+      for (let i = 0; i < adds.length; i++) {
+        const x = adds[i][0], y = adds[i][1];
+        if (pairCnt[x][y] >= 1) d += w(x, y);
+        pairCnt[x][y]++; pairCnt[y][x]++;
+      }
+      return d;
+    }
+
+    function revert(removes, adds) {
+      for (let i = 0; i < adds.length; i++) {
+        const x = adds[i][0], y = adds[i][1];
+        pairCnt[x][y]--; pairCnt[y][x]--;
+      }
+      for (let i = 0; i < removes.length; i++) {
+        const x = removes[i][0], y = removes[i][1];
+        pairCnt[x][y]++; pairCnt[y][x]++;
+      }
+    }
+
+    let improved = true, rounds = 0;
+    // خطوات «جانبية» (مش بتحسّن ولا بتوحّش) — بتساعدنا نهرب من الحلول المحلية
+    let sideways = (maxRounds || 40) * nEff;
+
+    while (improved && rounds++ < (maxRounds || 40)) {
+      improved = false;
+
+      for (let pi = 0; pi < perPeriod.length; pi++) {
+        const sol = perPeriod[pi];
+        const nSlots = sol.length;
+        if (nSlots < 2) continue;
+
+        // M[team][slot] = فهرس اللعبة  |  where[team][slot] = المباراة نفسها
+        const M = [], W = [];
+        for (let t = 0; t < nEff; t++) { M.push(new Int32Array(nSlots).fill(-1)); W.push(new Array(nSlots).fill(null)); }
+        for (let sIdx = 0; sIdx < nSlots; sIdx++) {
+          (sol[sIdx] || []).forEach(function (m) {
+            M[m.a][sIdx] = m.game; W[m.a][sIdx] = m;
+            M[m.b][sIdx] = m.game; W[m.b][sIdx] = m;
+          });
+        }
+
+        const teamOrder = shuffle(Array.from({ length: nEff }, function (_, i) { return i; }), rnd);
+
+        for (let ai = 0; ai < teamOrder.length; ai++) {
+          const a = teamOrder[ai];
+          for (let bi = 0; bi < teamOrder.length; bi++) {
+            const b = teamOrder[bi];
+            if (b === a) continue;
+
+            for (let s1 = 0; s1 < nSlots; s1++) {
+              const g1 = M[a][s1], g2 = M[b][s1];
+              if (g1 < 0 || g2 < 0 || g1 === g2) continue;
+
+              for (let s2 = s1 + 1; s2 < nSlots; s2++) {
+                // الشرط: في الجولة التانية يكونوا متبادلين بالظبط
+                if (M[a][s2] !== g2 || M[b][s2] !== g1) continue;
+
+                const m1 = W[a][s1], m2 = W[b][s1], m3 = W[a][s2], m4 = W[b][s2];
+                const pa = (m1.a === a) ? m1.b : m1.a;   // شريك أ في الجولة ١
+                const pb = (m2.a === b) ? m2.b : m2.a;   // شريك ب في الجولة ١
+                const qa = (m3.a === a) ? m3.b : m3.a;   // شريك أ في الجولة ٢
+                const qb = (m4.a === b) ? m4.b : m4.a;   // شريك ب في الجولة ٢
+                if (pa === b || pb === a || qa === b || qb === a) continue;
+
+                const removes = [[a, pa], [b, pb], [a, qa], [b, qb]];
+                const adds    = [[b, pa], [a, pb], [b, qa], [a, qb]];
+                const d = delta(removes, adds);
+
+                const takeIt = (d < -1e-9) ||
+                  (Math.abs(d) < 1e-9 && sideways > 0 && rnd() < 0.35 && --sideways >= 0);
+
+                if (takeIt) {
+                  // نفّذ التبديل فعلياً
+                  if (m1.a === a) m1.a = b; else m1.b = b;
+                  if (m2.a === b) m2.a = a; else m2.b = a;
+                  if (m3.a === a) m3.a = b; else m3.b = b;
+                  if (m4.a === b) m4.a = a; else m4.b = a;
+
+                  M[a][s1] = g2; M[b][s1] = g1; M[a][s2] = g1; M[b][s2] = g2;
+                  W[a][s1] = m2; W[b][s1] = m1; W[a][s2] = m4; W[b][s2] = m3;
+                  if (d < -1e-9) improved = true;   // الخطوات الجانبية ما تخلّيش اللوب لا نهائي
+                } else {
+                  revert(removes, adds);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   function computePairCnt(perPeriod, nEff) {
     const pc = [];
     for (let i = 0; i < nEff; i++) pc.push(new Int32Array(nEff));
@@ -421,11 +573,14 @@
       if (!perPeriod) continue;
 
       const pairCnt = computePairCnt(perPeriod, nEff);
+      improvePairs(perPeriod, pairCnt, nEff, BYE, rnd, options.improveRounds || 40);
       if (strict && hasRepeat(pairCnt, nEff)) continue;
 
       const scored = score(model, analysis, perPeriod, pairCnt, nEff, BYE);
+      if (scored.stats.restViolations > 0) continue;   // القاعدة الإجبارية: صفر راحة
       if (!best || scored.penalty < best.penalty) best = scored;
-      if (best.penalty === 0) break;
+      // وقفنا بدري لو وصلنا لأحسن نتيجة ممكنة رياضياً — مفيش فايدة من محاولات زيادة
+      if (best.penalty === 0 || best.stats.isOptimal) break;
     }
 
     if (!best) {
@@ -433,7 +588,7 @@
         ok: false, reason: strict ? 'strict-not-found' : 'not-found', analysis: analysis,
         message: strict
           ? 'مالقيتش جدول من غير أي تكرار مواجهات بالأرقام دي. جرّب الخيار التاني، أو قلّل عدد الألعاب.'
-          : 'مالقيتش حل صالح بالأرقام دي — راجع تحذيرات الجدوى فوق.'
+          : 'مالقيتش حل صالح بالأرقام دي (مع شرط إن محدش يرتاح في أي جولة) — راجع تحذيرات الجدوى فوق.'
       };
     }
 
@@ -517,13 +672,54 @@
     const restVals = restPerTeam.map(function (r) { return r.rest; });
     const restSpread = restVals.length ? Math.max.apply(null, restVals) - Math.min.apply(null, restVals) : 0;
 
-    const penalty = repeats * 1000 + restSpread * 10;
+    // فحص القاعدة الإجبارية: مفيش فريق قاعد يستنى في أي جولة
+    const idleSlots = [];
+    const slotKeys = {};
+    rows.forEach(function (r) {
+      const k = r.periodId + '|' + r.round;
+      if (!slotKeys[k]) slotKeys[k] = { periodName: r.periodName, round: r.round, start: r.start, teams: {} };
+      if (r.teamAId) slotKeys[k].teams[r.teamAId] = true;
+      if (r.teamBId) slotKeys[k].teams[r.teamBId] = true;
+    });
+    Object.keys(slotKeys).forEach(function (k) {
+      const sl = slotKeys[k];
+      const idle = teams.filter(function (t) { return !sl.teams[t.id]; });
+      if (idle.length) {
+        idleSlots.push({
+          periodName: sl.periodName, round: sl.round, start: sl.start,
+          teams: idle.map(function (t) { return t.name; })
+        });
+      }
+    });
+    const restViolations = idleSlots.reduce(function (a, x) { return a + x.teams.length; }, 0);
+
+    // التغطية: فيه فريقين ما اتقابلوش خالص طول اليوم؟
+    const uncoveredPairs = [];
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        if (pairCnt[i][j] === 0) uncoveredPairs.push({ a: teams[i].name, b: teams[j].name });
+      }
+    }
+    const pairsTotal = n * (n - 1) / 2;
+    const pairsCovered = pairsTotal - uncoveredPairs.length;
+
+    // الأولويات: الراحة ← فرق ما اتقابلوش ← تكرار المواجهات
+    const penalty = restViolations * 1000000 + uncoveredPairs.length * 5000 + repeats * 1000 + restSpread * 10;
 
     return {
       rows: rows,
       penalty: penalty,
       stats: {
+        penalty: penalty,
         totalMatches: rows.length,
+        restViolations: restViolations,
+        idleSlots: idleSlots,
+        noRest: restViolations === 0,
+        uncoveredPairs: uncoveredPairs,
+        pairsCovered: pairsCovered,
+        pairsTotal: pairsTotal,
+        fullCoverage: uncoveredPairs.length === 0,
+        coveragePossible: analysis.totalGames >= n - 1,
         repeats: repeats,
         repeatPairs: repeatPairs.sort(function (x, y) { return y.times - x.times; }),
         minRepeatsPossible: analysis.minRepeatsPerTeam > 0
@@ -554,6 +750,23 @@
           errors.push('الفريق «' + t.name + '» لعب اللعبة رقم ' + gid + ' عدد ' + c + ' مرة (المفروض مرة واحدة).');
         }
       });
+    });
+
+    // القاعدة الإجبارية: مفيش فريق قاعد يستنى في أي جولة
+    const bySlot = {};
+    rows.forEach(function (r) {
+      const k = r.periodId + '|' + r.round;
+      bySlot[k] = bySlot[k] || { name: r.periodName, round: r.round, start: r.start, ids: {} };
+      if (r.teamAId) bySlot[k].ids[r.teamAId] = true;
+      if (r.teamBId) bySlot[k].ids[r.teamBId] = true;
+    });
+    Object.keys(bySlot).forEach(function (k) {
+      const sl = bySlot[k];
+      const idle = teams.filter(function (t) { return !sl.ids[t.id]; });
+      if (idle.length) {
+        errors.push('في «' + sl.name + '» جولة ' + sl.round + ' (' + sl.start + '): ' +
+          idle.map(function (t) { return t.name; }).join('، ') + ' قاعدين من غير لعبة.');
+      }
     });
 
     // تعارض: فريق في مكانين في نفس الوقت
