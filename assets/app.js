@@ -13,6 +13,9 @@
   const scoreDraft = {};       // 'matchId|a' → القيمة اللي المشرف كاتبها ولسه مأكّدش
   let filters = { period: '', game: '', sup: '' };
   let boardTime = null;        // null = الوقت الحالي، أو دقايق اليوم لو المشرف اختار وقت
+  let teamSearch = '';         // بحث شاشة الفرق (باسم الفريق أو اللاعب)
+  let openTeams = {};          // الفرق المفتوحة قائمة لاعبيها في شاشة الإعداد
+  let popupTeamId = null;      // الفريق اللي قايمة لاعبيه مفتوحة كـ pop-up
   let tab = 'supervisor';
   let dirty = false;
   let working = false;
@@ -72,6 +75,32 @@
     } else {
       el.classList.remove('gone');
     }
+  }
+
+  /* أي مستند داخل التطبيق لازم يكون فيه players لكل فريق */
+  function normalizeDoc(d) {
+    if (d && Array.isArray(d.teams)) {
+      d.teams.forEach(function (t) {
+        if (!Array.isArray(t.players)) t.players = [];
+        t.players = t.players.map(function (n) { return String(n == null ? '' : n); });
+      });
+    }
+    return d;
+  }
+
+  /* بنلفّ دوال القراءة كمان عشان أي مستند جاي من الشيت أو الجهاز يتظبط */
+  function instrumentReading() {
+    ['pull', 'localSnapshot', 'defaultDoc'].forEach(function (name) {
+      const orig = API[name];
+      if (typeof orig !== 'function' || orig.__wrapped) return;
+      const wrapped = function () {
+        const res = orig.apply(API, arguments);
+        if (res && typeof res.then === 'function') return res.then(normalizeDoc);
+        return normalizeDoc(res);
+      };
+      wrapped.__wrapped = true;
+      API[name] = wrapped;
+    });
   }
 
   /* بنلفّ دوال الحفظ كلها مرة واحدة، فأي عملية حفظ في التطبيق بتظهر في الشريط */
@@ -244,9 +273,9 @@
     $('#shell').classList.remove('hidden');
 
     const allowed = {
-      admin: ['supervisor', 'board', 'schedule', 'results', 'setup'],
-      sup: ['supervisor'],
-      view: ['board', 'schedule', 'results']
+      admin: ['supervisor', 'board', 'schedule', 'teams', 'results', 'setup'],
+      sup: ['supervisor', 'teams'],
+      view: ['board', 'schedule', 'teams', 'results']
     }[role];
 
     Array.prototype.forEach.call(document.querySelectorAll('#tabbar button'), function (b) {
@@ -254,10 +283,10 @@
     });
 
     if (role === 'sup') {
-      // المشرف بيشوف شاشة واحدة بس — من غير تبويبات
-      tab = 'supervisor';
-      $('#tabbar').classList.add('hidden');
-      document.body.classList.add('no-nav');
+      // المشرف بيشوف شاشتين بس: التأكيد + الفرق واللاعبين
+      if (allowed.indexOf(tab) === -1) tab = 'supervisor';
+      $('#tabbar').classList.remove('hidden');
+      document.body.classList.remove('no-nav');
     } else {
       $('#tabbar').classList.remove('hidden');
       document.body.classList.remove('no-nav');
@@ -342,6 +371,8 @@
     else if (tab === 'supervisor') v.innerHTML = viewSupervisor();
     else if (tab === 'results') v.innerHTML = viewResults();
     else if (tab === 'board') v.innerHTML = viewBoard();
+    else if (tab === 'teams') v.innerHTML = viewTeams();
+    renderTeamPopup();
     restoreDrafts();
     updateSaveBar();
   }
@@ -416,10 +447,34 @@
       }).join('') +
       '</div><div class="spacer"></div><div class="list">' +
       doc.teams.map(function (t, i) {
-        return '<div class="row-item">' +
+        const players = t.players || [];
+        const open = !!openTeams[t.id];
+        return '<div class="team-edit">' +
+          '<div class="row-item">' +
           '<span class="idx">' + ar(i + 1) + '</span>' +
           '<input data-path="teams.' + i + '.name" value="' + esc(t.name) + '" placeholder="اسم الفريق">' +
           '<button class="icon-btn danger" data-action="team-del" data-i="' + i + '">✕</button>' +
+          '</div>' +
+          '<button class="players-toggle" data-action="toggle-players" data-id="' + esc(t.id) + '">' +
+          '<span>' + (open ? '▾' : '▸') + ' 👥 اللاعبين</span>' +
+          '<span class="chip">' + ar(players.length) + '</span>' +
+          '</button>' +
+          (open
+            ? '<div class="players-box">' +
+              (players.length
+                ? '<div class="list">' + players.map(function (nm, pi) {
+                    return '<div class="row-item">' +
+                      '<span class="idx">' + ar(pi + 1) + '</span>' +
+                      '<input data-path="teams.' + i + '.players.' + pi + '" value="' + esc(nm) + '" placeholder="اسم اللاعب">' +
+                      '<button class="icon-btn danger" data-action="player-del" data-i="' + i + '" data-p="' + pi + '">✕</button>' +
+                      '</div>';
+                  }).join('') + '</div><div class="spacer"></div>'
+                : '<p class="small muted">لسه مفيش لاعبين.</p>') +
+              '<button class="btn sm block" data-action="player-add" data-i="' + i + '">➕ إضافة لاعب</button>' +
+              '<p class="small muted" style="margin-top:8px">تقدر تلزق أسماء كتير مرة واحدة: كل اسم في سطر.</p>' +
+              '<button class="btn sm ghost block" data-action="players-bulk" data-i="' + i + '">📋 لصق قائمة أسماء</button>' +
+              '</div>'
+            : '') +
           '</div>';
       }).join('') +
       '</div><div class="spacer"></div>' +
@@ -782,7 +837,7 @@
         rows.map(function (r) {
           return '<tr><td class="cell-game"><b>' + esc(r.gameName) + '</b>' +
             (r.place ? '<br><span class="muted small">' + esc(r.place) + '</span>' : '') + '</td>' +
-            '<td>' + esc(r.teamA) + '</td><td>' + esc(r.teamB) + '</td>' +
+            '<td>' + teamLink(r.teamA, r.teamAId) + '</td><td>' + teamLink(r.teamB, r.teamBId) + '</td>' +
             '<td>' + statusBadge(r) + '</td></tr>';
         }).join('') +
         '</tbody></table></div></div>';
@@ -797,7 +852,7 @@
       slots.map(function (s) { return '<th>' + tm(s.start) + '</th>'; }).join('') +
       '</tr></thead><tbody>';
     doc.teams.forEach(function (t) {
-      h += '<tr><td><b>' + esc(t.name) + '</b></td>';
+      h += '<tr><td><b>' + teamLink(t.name, t.id) + '</b></td>';
       slots.forEach(function (s) {
         const m = doc.schedule.find(function (r) {
           return r.periodId + '|' + r.round === s.key && (r.teamAId === t.id || r.teamBId === t.id);
@@ -826,7 +881,7 @@
             (g.supervisor ? '👤 ' + esc(g.supervisor) : '') + '</p>' : '') +
           '<div class="table-wrap"><table><thead><tr><th>الوقت</th><th>الفريقين</th><th>الحالة</th></tr></thead><tbody>' +
           rows.map(function (r) {
-            return '<tr><td>' + tm(r.start) + '</td><td>' + esc(r.teamA) + ' × ' + esc(r.teamB) + '</td><td>' + statusBadge(r) + '</td></tr>';
+            return '<tr><td>' + tm(r.start) + '</td><td>' + teamLink(r.teamA, r.teamAId) + ' × ' + teamLink(r.teamB, r.teamBId) + '</td><td>' + statusBadge(r) + '</td></tr>';
           }).join('') + '</tbody></table></div></div>';
       });
     });
@@ -842,6 +897,117 @@
     if (n >= r.startMin && n < r.endMin) return '<span class="badge now">جارية</span>';
     if (n >= r.endMin) return '<span class="badge" style="color:var(--warn)">متأخرة</span>';
     return '<span class="badge">لسه</span>';
+  }
+
+  /* ================= شاشة الفرق واللاعبين ================= */
+
+  /* اسم فريق قابل للضغط — بيفتح قايمة اللاعبين */
+  function teamLink(name, id) {
+    if (!id) return esc(name);
+    return '<span class="team-link" data-action="team-popup" data-team="' + esc(id) + '">' + esc(name) + '</span>';
+  }
+
+  function norm(v) {
+    return String(v == null ? '' : v).trim().toLowerCase();
+  }
+
+  function hilite(text, q) {
+    const t = String(text);
+    if (!q) return esc(t);
+    const i = t.toLowerCase().indexOf(q);
+    if (i === -1) return esc(t);
+    return esc(t.slice(0, i)) + '<mark>' + esc(t.slice(i, i + q.length)) + '</mark>' + esc(t.slice(i + q.length));
+  }
+
+  function viewTeams() {
+    if (!doc.teams.length) {
+      return '<div class="card center"><p class="muted">لسه مفيش فرق.</p>' +
+        (role === 'admin'
+          ? '<button class="btn primary block" data-action="goto" data-tab="setup">روح لصفحة الإعداد</button>'
+          : '<p class="small muted">الأدمن لسه ماضافش الفرق.</p>') +
+        '</div>';
+    }
+
+    const q = norm(teamSearch);
+    const totalPlayers = doc.teams.reduce(function (a, t) { return a + (t.players || []).length; }, 0);
+
+    let h = '<div class="card">' +
+      '<div class="card-head"><h2>👥 الفرق واللاعبين</h2>' +
+      '<span class="chip">' + ar(doc.teams.length) + ' فرق • ' + ar(totalPlayers) + ' لاعب</span></div>' +
+      '<div class="field"><label>بحث باسم الفريق أو اسم اللاعب</label>' +
+      '<input id="teamSearch" type="search" value="' + esc(teamSearch) + '" placeholder="اكتب اسم فريق أو لاعب…"></div>' +
+      (q ? '<button class="btn sm ghost block" data-action="clear-team-search">مسح البحث</button>' : '') +
+      '</div>';
+
+    // فريق بيتعرض لو اسمه فيه البحث أو فيه لاعب اسمه فيه البحث
+    const shown = doc.teams.map(function (t) {
+      const players = t.players || [];
+      const teamHit = !q || norm(t.name).indexOf(q) !== -1;
+      const hits = players.filter(function (n) { return q && norm(n).indexOf(q) !== -1; });
+      return { team: t, players: players, teamHit: teamHit, hits: hits };
+    }).filter(function (x) { return !q || x.teamHit || x.hits.length; });
+
+    if (!shown.length) {
+      return h + '<div class="card center muted">مفيش فريق ولا لاعب بالاسم ده.</div>';
+    }
+
+    shown.forEach(function (x) {
+      const t = x.team;
+      // لو البحث على لاعب، نعرض اللاعبين المطابقين الأول
+      const list = (q && !x.teamHit) ? x.hits : x.players;
+      h += '<div class="card tight">' +
+        '<div class="card-head">' +
+        '<h2>' + teamLink(t.name, t.id) + '</h2>' +
+        '<span class="chip">' + ar(x.players.length) + ' لاعب</span></div>' +
+        (q && !x.teamHit && x.hits.length
+          ? '<p class="small muted">مطابق في اللاعبين (' + ar(x.hits.length) + ' من ' + ar(x.players.length) + ')</p>'
+          : '') +
+        (list.length
+          ? '<ol class="roster">' + list.map(function (n) {
+              return '<li>' + hilite(n, q) + '</li>';
+            }).join('') + '</ol>'
+          : '<p class="small muted">لسه مامتسجّلش لاعبين للفريق ده.</p>') +
+        '<div class="spacer"></div>' +
+        '<button class="btn sm block" data-action="team-popup" data-team="' + esc(t.id) + '">👁️ اعرضهم في نافذة</button>' +
+        '</div>';
+    });
+
+    return h;
+  }
+
+  /* --- نافذة اللاعبين (pop-up) --- */
+
+  function renderTeamPopup() {
+    let root = document.getElementById('modalRoot');
+    if (!root) {
+      root = document.createElement('div');
+      root.id = 'modalRoot';
+      document.body.appendChild(root);
+    }
+    if (!popupTeamId) { root.innerHTML = ''; document.body.classList.remove('modal-open'); return; }
+
+    const t = doc.teams.find(function (x) { return x.id === popupTeamId; });
+    if (!t) { popupTeamId = null; root.innerHTML = ''; document.body.classList.remove('modal-open'); return; }
+
+    const players = t.players || [];
+    root.innerHTML =
+      '<div class="modal-back" data-action="close-popup">' +
+      '<div class="modal" role="dialog" aria-modal="true" aria-label="لاعبين ' + esc(t.name) + '">' +
+      '<div class="modal-head">' +
+      '<h2>' + esc(t.name) + '</h2>' +
+      '<button class="icon-btn" data-action="close-popup" aria-label="إغلاق">✕</button>' +
+      '</div>' +
+      '<div class="modal-body">' +
+      (players.length
+        ? '<ol class="roster big">' + players.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ol>'
+        : '<p class="muted center">لسه مامتسجّلش لاعبين للفريق ده.</p>') +
+      '</div>' +
+      '<div class="modal-foot">' +
+      '<span class="chip">' + ar(players.length) + ' لاعب</span>' +
+      '<button class="btn" data-action="close-popup">تمام</button>' +
+      '</div>' +
+      '</div></div>';
+    document.body.classList.add('modal-open');
   }
 
   /* ================= شاشة المشرف ================= */
@@ -990,7 +1156,7 @@
         '<div class="meta">' + (r.place ? esc(r.place) + ' • ' : '') + 'جولة ' + ar(r.round) + '</div></div>' +
         (isNow ? '<span class="badge now">دلوقتي</span>' : late ? '<span class="badge" style="color:var(--warn)">متأخرة</span>' : '') +
         '</div>' +
-        '<div class="vs"><div class="t">' + esc(r.teamA) + '</div><div class="x">ضد</div><div class="t">' + esc(r.teamB) + '</div></div>';
+        '<div class="vs"><div class="t">' + teamLink(r.teamA, r.teamAId) + '</div><div class="x">ضد</div><div class="t">' + teamLink(r.teamB, r.teamBId) + '</div></div>';
 
       if (r.status === 'done') {
         h += '<div class="alert good small" style="margin:0">تمّ التأكيد' +
@@ -1166,7 +1332,7 @@
       h += '<div class="board-grid">' + current.map(function (r) {
         return '<div class="match now"><div class="game-title">' + esc(r.gameName) + '</div>' +
           (r.place ? '<div class="meta">' + esc(r.place) + '</div>' : '') +
-          '<div class="vs"><div class="t">' + esc(r.teamA) + '</div><div class="x">ضد</div><div class="t">' + esc(r.teamB) + '</div></div>' +
+          '<div class="vs"><div class="t">' + teamLink(r.teamA, r.teamAId) + '</div><div class="x">ضد</div><div class="t">' + teamLink(r.teamB, r.teamBId) + '</div></div>' +
           '<div class="center meta">' + tm(r.start) + ' – ' + tm(r.end) + ' • ' + statusBadge(r, n) + '</div></div>';
       }).join('') + '</div>';
     }
@@ -1176,7 +1342,7 @@
         '<div class="board-grid">' + next.map(function (r) {
           return '<div class="match"><div class="game-title">' + esc(r.gameName) + '</div>' +
             (r.place ? '<div class="meta">' + esc(r.place) + '</div>' : '') +
-            '<div class="vs"><div class="t">' + esc(r.teamA) + '</div><div class="x">ضد</div><div class="t">' + esc(r.teamB) + '</div></div></div>';
+            '<div class="vs"><div class="t">' + teamLink(r.teamA, r.teamAId) + '</div><div class="x">ضد</div><div class="t">' + teamLink(r.teamB, r.teamBId) + '</div></div></div>';
         }).join('') + '</div>';
     }
     return h;
@@ -1193,6 +1359,14 @@
       markDirty();
     }
     if (el.id === 'myName') localStorage.setItem('funday.myName', el.value);
+    if (el.id === 'teamSearch') {
+      teamSearch = el.value;
+      const caret = el.selectionStart;
+      render();
+      const again = document.getElementById('teamSearch');
+      if (again) { again.focus(); try { again.setSelectionRange(caret, caret); } catch (e) { } }
+      return;
+    }
     if (el.classList && el.classList.contains('sc')) {
       scoreDraft[el.dataset.id + '|' + el.dataset.side] = el.value;
     }
@@ -1221,6 +1395,14 @@
       if (act === 'goto') { tab = btn.dataset.tab; render(); return; }
       if (act === 'clear-filters') { filters = { period: '', game: '', sup: '' }; saveFilters(); render(); return; }
       if (act === 'board-now') { boardTime = null; render(); return; }
+      if (act === 'clear-team-search') { teamSearch = ''; render(); return; }
+      if (act === 'toggle-players') {
+        const id = btn.dataset.id;
+        openTeams[id] = !openTeams[id];
+        render(); return;
+      }
+      if (act === 'team-popup') { popupTeamId = btn.dataset.team; renderTeamPopup(); return; }
+      if (act === 'close-popup') { popupTeamId = null; renderTeamPopup(); return; }
       if (act === 'reload') {
         try { doc = await API.pull(); render(); toast('اتحدّث'); } catch (err) { toast(err.message, 'bad'); }
         return;
@@ -1278,7 +1460,37 @@
         markDirty(); render(); return;
       }
       if (act === 'team-del') {
+        const t = doc.teams[Number(btn.dataset.i)];
+        const cnt = t && t.players ? t.players.length : 0;
+        if (cnt && !confirm('الفريق ده معاه ' + ar(cnt) + ' لاعب. تحذفه بلاعبيه؟')) return;
         doc.teams.splice(Number(btn.dataset.i), 1);
+        markDirty(); render(); return;
+      }
+      if (act === 'player-add') {
+        const t = doc.teams[Number(btn.dataset.i)];
+        if (!t) return;
+        if (!Array.isArray(t.players)) t.players = [];
+        t.players.push('');
+        openTeams[t.id] = true;
+        markDirty(); render();
+        // نحطّ المؤشّر في الخانة الجديدة على طول
+        const box = document.querySelectorAll('[data-path="teams.' + Number(btn.dataset.i) + '.players.' + (t.players.length - 1) + '"]');
+        if (box[0]) box[0].focus();
+        return;
+      }
+      if (act === 'player-del') {
+        const t = doc.teams[Number(btn.dataset.i)];
+        if (!t || !t.players) return;
+        t.players.splice(Number(btn.dataset.p), 1);
+        markDirty(); render(); return;
+      }
+      if (act === 'players-bulk') {
+        const t = doc.teams[Number(btn.dataset.i)];
+        if (!t) return;
+        const txt = prompt('الصق أسماء اللاعبين — كل اسم في سطر:', (t.players || []).join(String.fromCharCode(10)));
+        if (txt === null) return;
+        t.players = txt.split(String.fromCharCode(10)).map(function (x) { return x.trim(); }).filter(function (x) { return x; });
+        openTeams[t.id] = true;
         markDirty(); render(); return;
       }
 
@@ -1536,6 +1748,8 @@
   }
 
   /* ================= إقلاع ================= */
+  instrumentReading();
   instrumentSaving();
+  doc = normalizeDoc(doc);
   boot();
 })();

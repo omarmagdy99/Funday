@@ -293,3 +293,50 @@ details > summary { cursor: pointer; min-height: 40px; display: flex; align-item
 .save-state.bad  { border-color: var(--danger); color: var(--danger); }
 .save-state.gone { opacity: 0; transform: translateX(-50%) translateY(-8px); }
 @media print { .save-state { display: none; } }
+
+/* ===== الفرق واللاعبين ===== */
+.team-link {
+  cursor: pointer;
+  border-bottom: 1px dashed color-mix(in srgb, var(--brand) 60%, transparent);
+  color: inherit;
+}
+.team-link:hover, .team-link:focus { color: var(--brand); }
+
+.roster { margin: 6px 0 0; padding-inline-start: 22px; }
+.roster li { padding: 3px 0; }
+.roster mark { background: color-mix(in srgb, var(--warn) 28%, transparent); color: inherit; border-radius: 4px; padding: 0 2px; }
+.roster.big li { font-size: 1.1rem; padding: 7px 0; border-bottom: 1px solid var(--line); }
+.roster.big li:last-child { border-bottom: 0; }
+
+.team-edit { border: 1px solid var(--line); border-radius: 12px; padding: 8px; margin-bottom: 10px; background: var(--card2); }
+.players-toggle {
+  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  min-height: 40px; margin-top: 6px; padding: 6px 10px;
+  border: 1px dashed var(--line); border-radius: 10px;
+  background: transparent; color: var(--muted); font: inherit; font-size: .92rem; cursor: pointer;
+}
+.players-toggle:hover { color: var(--text); border-color: var(--brand); }
+.players-box { padding: 8px 4px 2px; }
+
+/* ===== نافذة اللاعبين ===== */
+body.modal-open { overflow: hidden; }
+.modal-back {
+  position: fixed; inset: 0; z-index: 300;
+  background: rgba(15, 23, 42, .45);
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px; padding-bottom: calc(16px + var(--safe-b));
+}
+.modal {
+  width: min(94vw, 460px); max-height: 82vh; display: flex; flex-direction: column;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: 0 18px 50px rgba(15, 23, 42, .28);
+}
+.modal-head, .modal-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 12px 14px;
+}
+.modal-head { border-bottom: 1px solid var(--line); }
+.modal-foot { border-top: 1px solid var(--line); }
+.modal-head h2 { margin: 0; font-size: 1.25rem; }
+.modal-body { padding: 10px 16px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+@media print { .modal-back { display: none; } }

@@ -173,10 +173,13 @@ function doSaveSetup(p) {
 function writeTeamsSheet(teams) {
   var s = sheet(SH_TEAMS);
   s.clear();
-  var rows = [['#', 'اسم الفريق', 'id']];
-  teams.forEach(function (t, i) { rows.push([i + 1, t.name, t.id]); });
-  s.getRange(1, 1, rows.length, 3).setValues(rows);
-  s.getRange(1, 1, 1, 3).setFontWeight('bold').setBackground('#eef2f8');
+  var rows = [['#', 'اسم الفريق', 'عدد اللاعبين', 'اللاعبين', 'id']];
+  teams.forEach(function (t, i) {
+    var pl = t.players || [];
+    rows.push([i + 1, t.name, pl.length, pl.join('، '), t.id]);
+  });
+  s.getRange(1, 1, rows.length, 5).setValues(rows);
+  s.getRange(1, 1, 1, 5).setFontWeight('bold').setBackground('#eef2f8');
   s.setFrozenRows(1);
 }
 
