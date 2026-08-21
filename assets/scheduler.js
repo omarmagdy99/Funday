@@ -41,6 +41,18 @@
     return String(h).padStart(2, '0') + ':' + String(q).padStart(2, '0');
   }
 
+  /* العرض بنظام ١٢ ساعة: "14:15" → "2:15 م" و "09:05" → "9:05 ص".
+     التخزين بيفضل زي ما هو (24 ساعة) — ده للعرض بس.
+     أي نص مش على شكل ساعة بيرجع زي ما هو. */
+  function to12(hhmm) {
+    const s = String(hhmm == null ? '' : hhmm).trim();
+    const m = /^(\d{1,2}):(\d{2})$/.exec(s);
+    if (!m) return s;
+    const h24 = (+m[1]) % 24;
+    const h = (h24 % 12) || 12;
+    return h + ':' + m[2] + ' ' + (h24 < 12 ? 'ص' : 'م');
+  }
+
   /* ---------- حساب جولات الفترة ---------- */
 
   function periodSlots(period) {
@@ -781,7 +793,7 @@
       byTime[k].forEach(function (r) {
         [r.teamAId, r.teamBId].forEach(function (tid) {
           if (!tid) return;
-          if (seen[tid]) errors.push('تعارض الساعة ' + k + ': فريق واحد في لعبتين في نفس الوقت.');
+          if (seen[tid]) errors.push('تعارض الساعة ' + to12(k) + ': فريق واحد في لعبتين في نفس الوقت.');
           seen[tid] = true;
         });
       });
@@ -796,6 +808,7 @@
     validate: validate,
     periodSlots: periodSlots,
     toMinutes: toMinutes,
-    fromMinutes: fromMinutes
+    fromMinutes: fromMinutes,
+    to12: to12
   };
 })(window);
