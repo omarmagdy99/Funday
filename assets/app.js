@@ -630,7 +630,9 @@
     if (sups.length) {
       h += '<h3 style="margin-top:14px">رابط مخصّص لكل مشرف 🔒</h3>' +
         '<p class="small muted">بيفتح على مبارياته هو بس، ومفيش خيار يختار مشرف تاني. ' +
-        'أي تأكيد بيتسجّل باسمه تلقائياً.</p><div class="list">' +
+        'أي تأكيد بيتسجّل باسمه تلقائياً. ' +
+        '<b>ولو غيّرت اسم مشرف بعد ما بعتّ له الرابط، ابعت له الرابط الجديد</b> — ' +
+        'الرابط ده متربط بالاسم نفسه.</p><div class="list">' +
         sups.map(function (s) {
           return '<div class="row-item">' +
             '<span style="flex:1;font-weight:600">' + esc(s) + '</span>' +
@@ -645,7 +647,8 @@
       h += '<details style="margin-top:12px"><summary class="small">رابط مخصّص لكل لعبة</summary><div class="list" style="margin-top:8px">' +
         games.map(function (g) {
           return '<div class="row-item">' +
-            '<span style="flex:1"><b>' + esc(g.name) + '</b><br><span class="small muted">' + esc(g.period) + '</span></span>' +
+            '<span style="flex:1"><b>' + esc(g.name) + '</b>' + supTag(String(g.supervisor || '').trim()) +
+            '<br><span class="small muted">' + esc(g.period) + '</span></span>' +
             '<button class="btn sm" data-action="copy-link" data-key="1" data-lock="1" data-game="' + esc(g.id) + '" data-period="' + esc(g.periodId) + '">📋 نسخ</button>' +
             '</div>';
         }).join('') + '</div></details>';
@@ -835,8 +838,8 @@
         '<span class="chip">' + esc(s.periodName) + ' • جولة ' + ar(s.round) + '</span></div>' +
         '<div class="table-wrap"><table><thead><tr><th>اللعبة</th><th>الفريق الأول</th><th>الفريق التاني</th><th>الحالة</th></tr></thead><tbody>' +
         rows.map(function (r) {
-          return '<tr><td class="cell-game"><b>' + esc(r.gameName) + '</b>' +
-            (r.place ? '<br><span class="muted small">' + esc(r.place) + '</span>' : '') + '</td>' +
+          return '<tr><td class="cell-game"><b>' + esc(rowGame(r)) + '</b>' + supTag(rowSup(r)) +
+            (rowPlace(r) ? '<br><span class="muted small">' + esc(rowPlace(r)) + '</span>' : '') + '</td>' +
             '<td>' + teamLink(r.teamA, r.teamAId) + '</td><td>' + teamLink(r.teamB, r.teamBId) + '</td>' +
             '<td>' + statusBadge(r) + '</td></tr>';
         }).join('') +
@@ -859,7 +862,8 @@
         });
         if (!m) { h += '<td class="rest">راحة</td>'; return; }
         const opp = m.teamAId === t.id ? m.teamB : m.teamA;
-        h += '<td><span class="g">' + esc(m.gameName) + '</span><span class="o">ضد ' + esc(opp) + '</span></td>';
+        h += '<td><span class="g">' + esc(rowGame(m)) + supTag(rowSup(m)) + '</span>' +
+          '<span class="o">ضد ' + esc(opp) + '</span></td>';
       });
       h += '</tr>';
     });
@@ -874,11 +878,10 @@
         const rows = doc.schedule.filter(function (r) { return r.gameId === g.id; })
           .sort(function (x, y) { return x.startMin - y.startMin; });
         if (!rows.length) return;
-        h += '<div class="card tight"><div class="card-head"><h2>' + esc(g.name) + '</h2>' +
+        h += '<div class="card tight"><div class="card-head">' +
+          '<h2>' + esc(g.name) + supTag(String(g.supervisor || '').trim()) + '</h2>' +
           '<span class="chip">' + esc(p.name) + '</span></div>' +
-          (g.place || g.supervisor ? '<p class="small muted">' +
-            (g.place ? '📍 ' + esc(g.place) + ' ' : '') +
-            (g.supervisor ? '👤 ' + esc(g.supervisor) : '') + '</p>' : '') +
+          (g.place ? '<p class="small muted">📍 ' + esc(g.place) + '</p>' : '') +
           '<div class="table-wrap"><table><thead><tr><th>الوقت</th><th>الفريقين</th><th>الحالة</th></tr></thead><tbody>' +
           rows.map(function (r) {
             return '<tr><td>' + tm(r.start) + '</td><td>' + teamLink(r.teamA, r.teamAId) + ' × ' + teamLink(r.teamB, r.teamBId) + '</td><td>' + statusBadge(r) + '</td></tr>';
@@ -1025,11 +1028,47 @@
     return out;
   }
 
+  /* ---------- اللعبة الأصلية من الإعداد ----------
+     صفوف الجدول بتحتفظ بنسخة من اسم اللعبة والمكان والمشرف وقت التوليد.
+     لو الأدمن عدّل حاجة فيهم بعدين، بنقرا من اللعبة الأصلية على طول —
+     فالتعديل بيبان في كل الشاشات من غير إعادة توليد ومن غير ما نلمس النتايج. */
+  function liveGame(gameId) {
+    if (!gameId) return null;
+    for (let i = 0; i < doc.periods.length; i++) {
+      const gs = doc.periods[i].games || [];
+      for (let j = 0; j < gs.length; j++) if (gs[j].id === gameId) return gs[j];
+    }
+    return null;   // اللعبة اتمسحت من الإعداد — بنرجع للنسخة المحفوظة في الصف
+  }
+  function rowGame(r) { const g = liveGame(r.gameId); return g ? g.name : r.gameName; }
+  function rowPlace(r) { const g = liveGame(r.gameId); return String((g ? g.place : r.place) || '').trim(); }
+  function rowSup(r) { const g = liveGame(r.gameId); return String((g ? g.supervisor : r.supervisor) || '').trim(); }
+
+  /* «السيجا (ش أحمد عيسى)» — نص عادي للقوايم والـ CSV */
+  function gameLabel(name, sup) { return sup ? name + ' (ش ' + sup + ')' : name; }
+  /* نفس الفكرة بس HTML — اسم المشرف أصغر وأهدى جنب اسم اللعبة */
+  function supTag(sup) { return sup ? ' <span class="sup-tag">(ش ' + esc(sup) + ')</span>' : ''; }
+
+  /* بعد حفظ الإعداد: بنحدّث النسخة المحفوظة جوه صفوف الجدول كمان عشان
+     الشيت نفسه يفضل مظبوط. النتايج والتأكيدات والمواعيد مبتتلمسش خالص. */
+  function syncScheduleFromGames() {
+    let n = 0;
+    doc.schedule.forEach(function (r) {
+      const g = liveGame(r.gameId);
+      if (!g) return;
+      const name = g.name || '', place = g.place || '', sup = g.supervisor || '';
+      if (r.gameName === name && (r.place || '') === place && (r.supervisor || '') === sup) return;
+      r.gameName = name; r.place = place; r.supervisor = sup;
+      n++;
+    });
+    return n;
+  }
+
   /* أسماء المشرفين المسجّلة على الألعاب */
   function allSupervisors() {
     const set = {};
     allGames().forEach(function (g) { if (g.supervisor && String(g.supervisor).trim()) set[String(g.supervisor).trim()] = 1; });
-    doc.schedule.forEach(function (r) { if (r.supervisor && String(r.supervisor).trim()) set[String(r.supervisor).trim()] = 1; });
+    doc.schedule.forEach(function (r) { const v = rowSup(r); if (v) set[v] = 1; });
     return Object.keys(set).sort(function (a, b) { return a.localeCompare(b, 'ar'); });
   }
 
@@ -1037,7 +1076,7 @@
     return doc.schedule.filter(function (r) {
       if (filters.period && r.periodId !== filters.period) return false;
       if (filters.game && r.gameId !== filters.game) return false;
-      if (filters.sup && String(r.supervisor || '').trim() !== filters.sup) return false;
+      if (filters.sup && rowSup(r) !== filters.sup) return false;
       return true;
     }).sort(function (x, y) { return x.startMin - y.startMin; });
   }
@@ -1116,10 +1155,12 @@
     }
     if (lockGame) {
       const g = games.find(function (x) { return x.id === filters.game; });
-      if (g) boxes.push('<span class="chip">🎮 ' + esc(g.name) + '</span>');
+      if (g) boxes.push('<span class="chip">🎮 ' + esc(gameLabel(g.name, String(g.supervisor || '').trim())) + '</span>');
     } else {
       boxes.push('<div class="field"><label>اللعبة</label><select id="fGame">' +
-        opts(gameOpts.map(function (g) { return { v: g.id, t: g.name }; }), filters.game, '— كل الألعاب —') +
+        opts(gameOpts.map(function (g) {
+          return { v: g.id, t: gameLabel(g.name, String(g.supervisor || '').trim()) };
+        }), filters.game, '— كل الألعاب —') +
         '</select></div>');
     }
     const chips = boxes.filter(function (b) { return b.indexOf('<span') === 0; });
@@ -1151,9 +1192,9 @@
       const late = r.status !== 'done' && n >= r.endMin;
       h += '<div class="match ' + (isNow ? 'now ' : '') + (r.status === 'done' ? 'done' : '') + '">' +
         '<div class="card-head" style="margin-bottom:4px">' +
-        '<div><div class="game-title">' + esc(r.gameName) + '</div>' +
+        '<div><div class="game-title">' + esc(rowGame(r)) + supTag(rowSup(r)) + '</div>' +
         '<div class="time">' + tm(r.start) + ' – ' + tm(r.end) + '</div>' +
-        '<div class="meta">' + (r.place ? esc(r.place) + ' • ' : '') + 'جولة ' + ar(r.round) + '</div></div>' +
+        '<div class="meta">' + (rowPlace(r) ? esc(rowPlace(r)) + ' • ' : '') + 'جولة ' + ar(r.round) + '</div></div>' +
         (isNow ? '<span class="badge now">دلوقتي</span>' : late ? '<span class="badge" style="color:var(--warn)">متأخرة</span>' : '') +
         '</div>' +
         '<div class="vs"><div class="t">' + teamLink(r.teamA, r.teamAId) + '</div><div class="x">ضد</div><div class="t">' + teamLink(r.teamB, r.teamBId) + '</div></div>';
@@ -1228,8 +1269,8 @@
     if (late.length) {
       h += '<div class="alert warn"><b>' + ar(late.length) + ' مباراة عدّى وقتها ولسه ماتأكدتش:</b><ul>' +
         late.slice(0, 8).map(function (r) {
-          return '<li>' + tm(r.start) + ' — ' + esc(r.gameName) + ' (' + esc(r.teamA) + ' × ' + esc(r.teamB) + ')' +
-            (r.supervisor ? ' — ' + esc(r.supervisor) : '') + '</li>';
+          return '<li>' + tm(r.start) + ' — ' + esc(rowGame(r)) + supTag(rowSup(r)) +
+            ' (' + esc(r.teamA) + ' × ' + esc(r.teamB) + ')</li>';
         }).join('') + '</ul></div>';
     }
     h += '</div>';
@@ -1260,7 +1301,7 @@
         '<button class="btn warn block" data-action="fill-zeros">٠ اعتبر كل الخانات الفاضية = صفر</button>';
       missing.forEach(function (r) {
         h += '<div class="match" style="margin-top:10px">' +
-          '<div class="meta">' + tm(r.start) + ' • ' + esc(r.gameName) + '</div>' +
+          '<div class="meta">' + tm(r.start) + ' • ' + esc(rowGame(r)) + supTag(rowSup(r)) + '</div>' +
           '<div class="grid2" style="margin-top:8px">' +
           '<div class="field"><label>' + esc(r.teamA) + '</label>' +
           '<input type="number" inputmode="numeric" placeholder="0" class="sc" data-id="' + esc(r.id) + '" data-side="a" value="' + esc(r.scoreA) + '"></div>' +
@@ -1300,7 +1341,7 @@
     const live = boardTime === null;
     const n = live ? nowMin() : boardTime;
     const current = doc.schedule.filter(function (r) { return n >= r.startMin && n < r.endMin; })
-      .sort(function (a, b) { return a.gameName.localeCompare(b.gameName, 'ar'); });
+      .sort(function (a, b) { return String(rowGame(a)).localeCompare(String(rowGame(b)), 'ar'); });
     const upcoming = doc.schedule.filter(function (r) { return r.startMin > n; });
     const nextStart = upcoming.length ? Math.min.apply(null, upcoming.map(function (r) { return r.startMin; })) : null;
     const next = nextStart === null ? [] : doc.schedule.filter(function (r) { return r.startMin === nextStart; });
@@ -1330,8 +1371,8 @@
     if (!current.length) h += '<div class="card center muted">مفيش مباريات شغالة ' + (live ? 'دلوقتي' : 'في الوقت ده') + '</div>';
     else {
       h += '<div class="board-grid">' + current.map(function (r) {
-        return '<div class="match now"><div class="game-title">' + esc(r.gameName) + '</div>' +
-          (r.place ? '<div class="meta">' + esc(r.place) + '</div>' : '') +
+        return '<div class="match now"><div class="game-title">' + esc(rowGame(r)) + supTag(rowSup(r)) + '</div>' +
+          (rowPlace(r) ? '<div class="meta">' + esc(rowPlace(r)) + '</div>' : '') +
           '<div class="vs"><div class="t">' + teamLink(r.teamA, r.teamAId) + '</div><div class="x">ضد</div><div class="t">' + teamLink(r.teamB, r.teamBId) + '</div></div>' +
           '<div class="center meta">' + tm(r.start) + ' – ' + tm(r.end) + ' • ' + statusBadge(r, n) + '</div></div>';
       }).join('') + '</div>';
@@ -1340,8 +1381,8 @@
     if (next.length) {
       h += '<h2 style="margin:16px 4px 8px">⏭️ الجاي — ' + tm(next[0].start) + '</h2>' +
         '<div class="board-grid">' + next.map(function (r) {
-          return '<div class="match"><div class="game-title">' + esc(r.gameName) + '</div>' +
-            (r.place ? '<div class="meta">' + esc(r.place) + '</div>' : '') +
+          return '<div class="match"><div class="game-title">' + esc(rowGame(r)) + supTag(rowSup(r)) + '</div>' +
+            (rowPlace(r) ? '<div class="meta">' + esc(rowPlace(r)) + '</div>' : '') +
             '<div class="vs"><div class="t">' + teamLink(r.teamA, r.teamAId) + '</div><div class="x">ضد</div><div class="t">' + teamLink(r.teamB, r.teamBId) + '</div></div></div>';
         }).join('') + '</div>';
     }
@@ -1526,9 +1567,14 @@
       /* --- الحفظ --- */
       if (act === 'save-setup') {
         btn.textContent = 'بحفظ…';
+        // لو اتغيّر اسم لعبة أو مكانها أو مشرفها، بنزامن الجدول الموجود كمان
+        // عشان الشيت يفضل مظبوط — من غير ما نلمس النتايج ولا نعيد التوليد
+        const synced = syncScheduleFromGames();
         await API.saveSetup(doc);
+        if (synced) await API.saveSchedule(doc);
         dirty = false;
-        toast(API.Backend.connected ? 'اتحفظ على جوجل شيت ✓' : 'اتحفظ على الجهاز ✓', 'good');
+        toast((API.Backend.connected ? 'اتحفظ على جوجل شيت ✓' : 'اتحفظ على الجهاز ✓') +
+          (synced ? ' • اتحدّثت ' + ar(synced) + ' مباراة بالأسماء الجديدة' : ''), 'good');
         render(); return;
       }
 
@@ -1730,7 +1776,7 @@
     const head = ['الفترة', 'الجولة', 'من', 'لـ', 'اللعبة', 'المكان', 'المشرف', 'الفريق الأول', 'الفريق التاني', 'الحالة', 'أكّدها', 'نتيجة ١', 'نتيجة ٢'];
     const lines = [head];
     doc.schedule.slice().sort(function (a, b) { return a.startMin - b.startMin; }).forEach(function (r) {
-      lines.push([r.periodName, r.round, r.start, r.end, r.gameName, r.place, r.supervisor,
+      lines.push([r.periodName, r.round, r.start, r.end, rowGame(r), rowPlace(r), rowSup(r),
         r.teamA, r.teamB, r.status === 'done' ? 'تمّت' : 'لسه', r.confirmedBy, r.scoreA, r.scoreB]);
     });
     const csv = '﻿' + lines.map(function (row) {
