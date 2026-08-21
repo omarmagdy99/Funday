@@ -35,10 +35,10 @@
   function nowMin() { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
   function clockText() {
     const d = new Date();
-    return arDigits(String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'));
+    return tm(String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'));
   }
-  /* عرض الوقت بأرقام عربية عشان يتناسق مع باقي الشاشة */
-  function tm(v) { return arDigits(esc(v)); }
+  /* عرض الوقت بنظام ١٢ ساعة (٢:١٥ م) وبأرقام عربية عشان يتناسق مع باقي الشاشة */
+  function tm(v) { return arDigits(esc(S.to12(v))); }
   function ar(n) { return new Intl.NumberFormat('ar-EG').format(n); }
   /* خانة فاضية أو مش رقم = صفر */
   function numOr0(v) {
@@ -274,7 +274,7 @@
 
     const allowed = {
       admin: ['supervisor', 'board', 'schedule', 'teams', 'results', 'setup'],
-      sup: ['supervisor', 'teams'],
+      sup: ['supervisor', 'board', 'teams'],
       view: ['board', 'schedule', 'teams', 'results']
     }[role];
 
@@ -283,7 +283,7 @@
     });
 
     if (role === 'sup') {
-      // المشرف بيشوف شاشتين بس: التأكيد + الفرق واللاعبين
+      // المشرف بيشوف تلات شاشات: التأكيد + العرض + الفرق واللاعبين
       if (allowed.indexOf(tab) === -1) tab = 'supervisor';
       $('#tabbar').classList.remove('hidden');
       document.body.classList.remove('no-nav');
